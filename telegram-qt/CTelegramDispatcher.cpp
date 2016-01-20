@@ -56,9 +56,9 @@ const int s_timerMaxInterval = 500; // 0.5 sec. Needed to limit max possible typ
 #endif
 
 enum TelegramMessageFlags {
-    TelegramMessageFlagNone   = 0x0,
-    TelegramMessageFlagUnread = 0x1, // Message was *not* read
-    TelegramMessageFlagOut    = 0x2  // Message is outgoing
+    TelegramMessageFlagNone    = 0,
+    TelegramMessageFlagForward = 1 << 2,
+    TelegramMessageFlagReply   = 1 << 3,
 };
 
 const quint32 FileRequestDescriptor::c_chunkSize = 128 * 256;
@@ -939,7 +939,7 @@ void CTelegramDispatcher::setMessageRead(const QString &identifier, quint32 mess
     const TLInputPeer peer = identifierToInputPeer(identifier);
 
     if (peer.tlType != TLValue::InputPeerEmpty) {
-        activeConnection()->messagesReadHistory(peer, messageId, /* offset */ 0, /* readContents */ false);
+        activeConnection()->messagesReadHistory(peer, messageId, /* offset */ 0);
     }
 }
 
@@ -1229,40 +1229,6 @@ void CTelegramDispatcher::messageActionTimerTimeout()
     }
 }
 
-void CTelegramDispatcher::whenStatedMessageReceived(const TLMessagesStatedMessage &statedMessage, quint64 messageId)
-{
-#ifdef DEVELOPER_BUILD
-    qDebug() << Q_FUNC_INFO << m_temporaryChatIdMap << statedMessage;
-#else
-    qDebug() << Q_FUNC_INFO << m_temporaryChatIdMap;
-#endif
-
-    if (m_temporaryChatIdMap.contains(messageId)) {
-        if (statedMessage.chats.isEmpty()) {
-            qDebug() << "Stated message expected to have chat id, but it haven't";
-            return;
-        }
-
-        const quint32 publicChatId = m_temporaryChatIdMap.take(messageId);
-        if (!havePublicChatId(publicChatId)) {
-            qDebug() << Q_FUNC_INFO << "Unexpected stated message public id " << publicChatId << " for chat " << statedMessage.chats.first().id;
-        } else {
-            m_chatIds[publicChatId - 1] = statedMessage.chats.first().id;
-            qDebug() << Q_FUNC_INFO << "public chat id " << publicChatId << " resolved to " << statedMessage.chats.first().id;
-        }
-    }
-
-    switch (statedMessage.tlType) {
-    case TLValue::MessagesStatedMessage:
-        processMessageReceived(statedMessage.message);
-        break;
-    default:
-        break;
-    }
-
-    ensureUpdateState(statedMessage.pts, statedMessage.seq);
-}
-
 void CTelegramDispatcher::whenMessageSentInfoReceived(const TLInputPeer &peer, quint64 randomId, quint32 messageId, quint32 pts, quint32 date, quint32 seq)
 {
     const QString phone = userIdToIdentifier(peer.userId);
@@ -1381,11 +1347,9 @@ void CTelegramDispatcher::whenUpdatesDifferenceReceived(const TLUpdatesDifferenc
     checkStateAndCallGetDifference();
 }
 
-void CTelegramDispatcher::whenMessagesChatsReceived(const QVector<TLChat> &chats, const QVector<TLUser> &users)
+void CTelegramDispatcher::whenMessagesChatsReceived(const QVector<TLChat> &chats)
 {
     qDebug() << Q_FUNC_INFO << chats.count();
-
-    whenUsersReceived(users);
 
     foreach (const TLChat &chat, chats) {
         updateChat(chat);
@@ -1483,13 +1447,13 @@ void CTelegramDispatcher::processUpdate(const TLUpdate &update)
 //        update.id;
 //        update.randomId;
 //        break;
-    case TLValue::UpdateReadMessages:
-        foreach (quint32 messageId, update.messages) {
-            const QPair<QString, quint64> phoneAndId = m_messagesMap.value(messageId);
-            emit sentMessageStatusChanged(phoneAndId.first, phoneAndId.second, TelegramNamespace::MessageDeliveryStatusRead);
-        }
-        ensureUpdateState(update.pts);
-        break;
+//    case TLValue::UpdateReadMessages:
+//        foreach (quint32 messageId, update.messages) {
+//            const QPair<QString, quint64> phoneAndId = m_messagesMap.value(messageId);
+//            emit sentMessageStatusChanged(phoneAndId.first, phoneAndId.second, TelegramNamespace::MessageDeliveryStatusRead);
+//        }
+//        ensureUpdateState(update.pts);
+//        break;
 //    case TLValue::UpdateDeleteMessages:
 //        update.messages;
 //        ensureUpdateState(update.pts);
@@ -1737,7 +1701,7 @@ void CTelegramDispatcher::processMessageReceived(const TLMessage &message)
     TelegramNamespace::Message apiMessage;
 
     TelegramNamespace::MessageFlags messageFlags = getPublicMessageFlags(message);
-    if (message.tlType == TLValue::MessageForwarded) {
+    if (messageFlags & TelegramNamespace::MessageFlagForwarded) {
         apiMessage.fwdContact = userIdToIdentifier(message.fwdFromId);
         apiMessage.fwdTimestamp = message.fwdDate;
     }
@@ -2032,16 +1996,14 @@ void CTelegramDispatcher::whenConnectionAuthChanged(int newState, quint32 dc)
                     SLOT(whenMessageSentInfoReceived(TLInputPeer,quint64,quint32,quint32,quint32,quint32)));
             connect(connection, SIGNAL(messagesHistoryReceived(TLMessagesMessages,TLInputPeer)),
                     SLOT(whenMessagesHistoryReceived(TLMessagesMessages)));
-            connect(connection, SIGNAL(statedMessageReceived(TLMessagesStatedMessage,quint64)),
-                    SLOT(whenStatedMessageReceived(TLMessagesStatedMessage,quint64)));
             connect(connection, SIGNAL(updatesStateReceived(TLUpdatesState)),
                     SLOT(whenUpdatesStateReceived(TLUpdatesState)));
             connect(connection, SIGNAL(updatesDifferenceReceived(TLUpdatesDifference)),
                     SLOT(whenUpdatesDifferenceReceived(TLUpdatesDifference)));
             connect(connection, SIGNAL(authExportedAuthorizationReceived(quint32,quint32,QByteArray)),
                     SLOT(whenAuthExportedAuthorizationReceived(quint32,quint32,QByteArray)));
-            connect(connection, SIGNAL(messagesChatsReceived(QVector<TLChat>,QVector<TLUser>)),
-                    SLOT(whenMessagesChatsReceived(QVector<TLChat>,QVector<TLUser>)));
+            connect(connection, SIGNAL(messagesChatsReceived(QVector<TLChat>)),
+                    SLOT(whenMessagesChatsReceived(QVector<TLChat>)));
             connect(connection, SIGNAL(messagesFullChatReceived(TLChatFull,QVector<TLChat>,QVector<TLUser>)),
                     SLOT(whenMessagesFullChatReceived(TLChatFull,QVector<TLChat>,QVector<TLUser>)));
             connect(connection, SIGNAL(userNameStatusUpdated(QString,TelegramNamespace::AccountUserNameStatus)),
@@ -2199,6 +2161,13 @@ void CTelegramDispatcher::whenWantedActiveDcChanged(quint32 dc)
     }
 }
 
+#ifndef TELEGRAMQT_NO_DEPRECATED
+void CTelegramDispatcher::whenPhoneStatusReceived(const QString &phone, bool registered)
+{
+    emit phoneStatusReceived(phone, registered, false);
+}
+#endif
+
 void CTelegramDispatcher::whenFileDataReceived(const TLUploadFile &file, quint32 requestId, quint32 offset)
 {
     if (!m_requestedFileDescriptors.contains(requestId)) {
@@ -2300,7 +2269,7 @@ void CTelegramDispatcher::whenUpdatesReceived(const TLUpdates &updates)
         TLMessage shortMessage;
         shortMessage.tlType = TLValue::Message;
         shortMessage.id = updates.id;
-        shortMessage.flags = TelegramMessageFlagUnread;
+//        shortMessage.flags = TelegramMessageFlagUnread;
         shortMessage.fromId = updates.fromId;
         shortMessage.message = updates.message;
         shortMessage.date = updates.date;
@@ -2480,16 +2449,16 @@ TelegramNamespace::MessageFlags CTelegramDispatcher::getPublicMessageFlags(const
 {
     TelegramNamespace::MessageFlags result = TelegramNamespace::MessageFlagNone;
 
-    if (message.flags & TelegramMessageFlagOut) {
+    if (message.fromId == m_selfUserId) {
         result |= TelegramNamespace::MessageFlagOut;
     }
 
-    if (!(message.flags & TelegramMessageFlagUnread)) {
-        result |= TelegramNamespace::MessageFlagRead;
+    if (message.flags & TelegramMessageFlagForward) {
+        result |= TelegramNamespace::MessageFlagForwarded;
     }
 
-    if (message.tlType == TLValue::MessageForwarded) {
-        result |= TelegramNamespace::MessageFlagForwarded;
+    if (message.flags & TelegramMessageFlagReply) {
+        result |= TelegramNamespace::MessageFlagReply;
     }
 
     return result;
@@ -2538,7 +2507,12 @@ CTelegramConnection *CTelegramDispatcher::createConnection()
     connect(connection, SIGNAL(newRedirectedPackage(QByteArray,quint32)), SLOT(whenPackageRedirected(QByteArray,quint32)));
     connect(connection, SIGNAL(wantedActiveDcChanged(quint32)), SLOT(whenWantedActiveDcChanged(quint32)));
 
-    connect(connection, SIGNAL(phoneStatusReceived(QString,bool,bool)), SIGNAL(phoneStatusReceived(QString,bool,bool)));
+    connect(connection, SIGNAL(phoneStatusReceived(QString,bool)), SIGNAL(phoneStatusReceived(QString,bool)));
+
+#ifndef TELEGRAMQT_NO_DEPRECATED
+    connect(connection, SIGNAL(phoneStatusReceived(QString,bool)), SLOT(whenPhoneStatusReceived(QString,bool)));
+#endif
+
     connect(connection, SIGNAL(phoneCodeRequired()), SIGNAL(phoneCodeRequired()));
     connect(connection,
             SIGNAL(authSignErrorReceived(TelegramNamespace::AuthSignError,QString)),

@@ -202,7 +202,7 @@ signals:
 
     void contactListChanged();
     void contactProfileChanged(const QString &contact);
-    void phoneStatusReceived(const QString &phone, bool registered, bool invited);
+    void phoneStatusReceived(const QString &phone, bool registered);
 
     void avatarReceived(const QString &contact, const QByteArray &data, const QString &mimeType, const QString &avatarToken);
     void messageMediaDataReceived(const QString &contact, quint32 messageId, const QByteArray &data, const QString &mimeType, TelegramNamespace::MessageType type, quint32 offset, quint32 size);
@@ -210,6 +210,7 @@ signals:
     void messageReceived(const TelegramNamespace::Message &message);
 
 #ifndef TELEGRAMQT_NO_DEPRECATED
+    void phoneStatusReceived(const QString &phone, bool registered, bool invited);
     void messageReceived(const QString &contact, const QString &message, TelegramNamespace::MessageType type, quint32 messageId, quint32 flags, quint32 timestamp);
     void chatMessageReceived(quint32 chatId, const QString &contact, const QString &message, TelegramNamespace::MessageType type, quint32 messageId, quint32 flags, quint32 timestamp);
 #endif
@@ -231,6 +232,10 @@ protected slots:
     void whenPackageRedirected(const QByteArray &data, quint32 dc);
     void whenWantedActiveDcChanged(quint32 dc);
 
+#ifndef TELEGRAMQT_NO_DEPRECATED
+    void whenPhoneStatusReceived(const QString &phone, bool registered);
+#endif
+
     void whenFileDataReceived(const TLUploadFile &file, quint32 requestId, quint32 offset);
     void whenFileDataUploaded(quint32 requestId);
     void whenUpdatesReceived(const TLUpdates &updates);
@@ -242,7 +247,6 @@ protected slots:
     void whenContactListChanged(const QVector<quint32> &added, const QVector<quint32> &removed);
     void messageActionTimerTimeout();
 
-    void whenStatedMessageReceived(const TLMessagesStatedMessage &statedMessage, quint64 messageId);
     void whenMessageSentInfoReceived(const TLInputPeer &peer, quint64 randomId, quint32 messageId, quint32 pts, quint32 date, quint32 seq);
     void whenMessagesHistoryReceived(const TLMessagesMessages &messages);
 
@@ -255,7 +259,7 @@ protected slots:
     void getDifference();
     void whenUpdatesDifferenceReceived(const TLUpdatesDifference &updatesDifference);
 
-    void whenMessagesChatsReceived(const QVector<TLChat> &chats, const QVector<TLUser> &users);
+    void whenMessagesChatsReceived(const QVector<TLChat> &chats);
     void whenMessagesFullChatReceived(const TLChatFull &chat, const QVector<TLChat> &chats, const QVector<TLUser> &users);
 
 protected:
